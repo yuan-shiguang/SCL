@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme, Disableable, Selectable};
+use gpui_kit::component::{ActiveTheme, Disableable, Selectable, Theme, ThemeMode};
 use gpui_kit::*;
 use scl_core::auth::{self, Account};
 use scl_core::config::LauncherSettings;
@@ -248,9 +248,27 @@ impl LauncherApp {
             _subscriptions: subscriptions,
         };
         app.selected_instance = app.instances.list().first().map(|i| i.id.clone());
+        app.apply_theme(cx);
         app.refresh_manifest(cx);
         app.detect_java(cx);
         app
+    }
+
+    /// 把设置里的 `theme` 落到 GPUI Kit 的全局主题上。
+    pub fn apply_theme(&self, cx: &mut Context<Self>) {
+        let mode = if self.settings.theme == "light" {
+            ThemeMode::Light
+        } else {
+            ThemeMode::Dark
+        };
+        Theme::change(mode, None, cx);
+    }
+
+    pub fn set_theme(&mut self, theme: &str, cx: &mut Context<Self>) {
+        self.settings.theme = theme.to_string();
+        let _ = self.settings.save(&self.paths);
+        self.apply_theme(cx);
+        cx.notify();
     }
 
     // ------------------------------------------------------------------ i18n

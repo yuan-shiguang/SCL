@@ -210,9 +210,11 @@ fn ms_error(resp: &MsResponse, fallback: &str) -> Error {
 
 /// Step 1: request a device code. The user must open `verification_uri`.
 pub fn request_device_code(app: &MsApp) -> Result<DeviceCode> {
-    let (status, body) = net::post_json_text(
+    // Microsoft 的 devicecode 端点只认 form-encoded，发 JSON 会得到
+    // AADSTS900144（"body must contain 'client_id'"）。
+    let (status, body) = net::post_form_text(
         &app.device_code_url(),
-        &serde_json::json!({ "client_id": app.client_id, "scope": SCOPE }),
+        &[("client_id", app.client_id.as_str()), ("scope", SCOPE)],
     )?;
     let resp: MsResponse = serde_json::from_str(&body)
         .map_err(|e| Error::Auth(format!("设备码响应解析失败 ({status}): {e}")))?;

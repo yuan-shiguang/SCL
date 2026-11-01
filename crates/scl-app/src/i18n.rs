@@ -171,6 +171,10 @@ const TABLE: &[Entry] = &[
     ("settings.open_logs", "查看日志", "Open logs", "ログを開く"),
     ("settings.language", "界面语言", "Language", "表示言語"),
     ("settings.language_desc", "切换后立即生效。", "Takes effect immediately.", "すぐに反映されます。"),
+    ("settings.appearance", "外观", "Appearance", "外観"),
+    ("settings.appearance_desc", "深色适合夜里玩，浅色适合白天。", "Dark for late-night sessions, light for daytime.", "夜はダーク、昼はライトがおすすめです。"),
+    ("settings.theme_dark", "深色", "Dark", "ダーク"),
+    ("settings.theme_light", "浅色", "Light", "ライト"),
     // ---------------- login
     ("login.busy", "正在申请设备码…", "Requesting device code…", "デバイスコードを取得中…"),
     ("login.hint", "在浏览器中打开下面的地址，输入这段代码：", "Open the address below in a browser and enter this code:", "次の URL を開き、コードを入力してください:"),

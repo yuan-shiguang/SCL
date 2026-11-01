@@ -52,6 +52,7 @@ impl LauncherApp {
         page = page.child(self.render_account_section(&theme, cx));
         page = page.child(self.render_java_section(&theme, cx));
         page = page.child(self.render_performance_section(&theme, cx));
+        page = page.child(self.render_appearance_section(&theme, cx));
         page = page.child(self.render_language_section(&theme, cx));
         page = page.child(self.render_about_section(&theme, cx));
         page
@@ -205,15 +206,26 @@ impl LauncherApp {
                 );
             }
             LoginView::Failed(error) => {
+                // AADSTS 的报错很长，必须允许换行，否则会顶出卡片。
+                let short: String = if error.chars().count() > 320 {
+                    let mut text: String = error.chars().take(320).collect();
+                    text.push('…');
+                    text
+                } else {
+                    error.clone()
+                };
                 body = body.child(
                     div()
+                        .w_full()
+                        .min_w_0()
                         .p_4()
                         .rounded(px(12.))
                         .border_1()
                         .border_color(theme.red)
                         .text_sm()
+                        .whitespace_normal()
                         .text_color(theme.red)
-                        .child(error.clone()),
+                        .child(short),
                 );
             }
             LoginView::Device { code, uri, hint } => {
@@ -683,6 +695,40 @@ impl LauncherApp {
             .child(self.section(
                 self.t("settings.language"),
                 self.t("settings.language_desc"),
+                theme,
+            ))
+            .child(row)
+    }
+
+    fn render_appearance_section(
+        &self,
+        theme: &gpui_kit::component::Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut row = div().flex().flex_row().gap_2();
+        for (mode, key) in [("dark", "settings.theme_dark"), ("light", "settings.theme_light")] {
+            let selected = self.settings.theme == mode;
+            row = row.child(
+                Button::new(SharedString::from(format!("theme-{mode}")))
+                    .label(self.t(key))
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_theme(mode, cx);
+                    })),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_5()
+            .rounded(px(16.))
+            .border_1()
+            .border_color(theme.border)
+            .child(self.section(
+                self.t("settings.appearance"),
+                self.t("settings.appearance_desc"),
                 theme,
             ))
             .child(row)
