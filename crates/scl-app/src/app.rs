@@ -189,6 +189,7 @@ pub struct LauncherApp {
 
     pub login: LoginView,
     pub offline_name: Entity<InputState>,
+    pub proxy_input: Entity<InputState>,
     pub toast: Option<Toast>,
     pub command_preview: Option<(String, String)>,
     pub confirm_delete: Option<String>,
@@ -206,9 +207,16 @@ impl LauncherApp {
             settings.language = Lang::detect().code().to_string();
         }
         let instances = InstanceStore::load(&paths);
+        // 下载源 / 代理要在任何网络请求之前生效。
+        settings.apply_network();
 
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("1.21"));
         let offline_name = cx.new(|cx| InputState::new(window, cx).placeholder("Player"));
+        let proxy_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("http://127.0.0.1:7890")
+                .default_value(settings.proxy.clone())
+        });
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(
@@ -218,6 +226,16 @@ impl LauncherApp {
                 if matches!(event, InputEvent::Change) {
                     this.shown = 40;
                     cx.notify();
+                }
+            },
+        ));
+
+        subscriptions.push(cx.subscribe_in(
+            &proxy_input,
+            window,
+            |this: &mut Self, _state, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.save_proxy(cx);
                 }
             },
         ));
@@ -241,6 +259,7 @@ impl LauncherApp {
             running_instance: None,
             login: LoginView::Hidden,
             offline_name,
+            proxy_input,
             toast: None,
             command_preview: None,
             confirm_delete: None,
@@ -268,6 +287,28 @@ impl LauncherApp {
         self.settings.theme = theme.to_string();
         let _ = self.settings.save(&self.paths);
         self.apply_theme(cx);
+        cx.notify();
+    }
+
+    /// 切换下载源（official / bmclapi / 自定义地址）。
+    pub fn set_mirror(&mut self, mirror: &str, cx: &mut Context<Self>) {
+        self.settings.mirror = mirror.to_string();
+        self.settings.apply_network();
+        let _ = self.settings.save(&self.paths);
+        // 换源之后清单要重新拉一次，否则还指着旧地址。
+        self.manifest = None;
+        self.refresh_manifest(cx);
+    }
+
+    /// 保存代理输入框里的内容。
+    pub fn save_proxy(&mut self, cx: &mut Context<Self>) {
+        let value = self.proxy_input.read(cx).value().trim().to_string();
+        if self.settings.proxy == value {
+            return;
+        }
+        self.settings.proxy = value;
+        self.settings.apply_network();
+        let _ = self.settings.save(&self.paths);
         cx.notify();
     }
 

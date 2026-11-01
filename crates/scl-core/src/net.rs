@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::Path;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -12,16 +13,81 @@ pub const USER_AGENT: &str = concat!(
     " (+https://github.com/yuan-shiguang/SCL)"
 );
 
+/// 官方源 → BMCLAPI 的路径映射。
+///
+/// BMCLAPI 对 Mojang 的三类主机是同名直通，只有 assets / maven / 元数据
+/// 需要额外前缀，所以这里单独列出后缀。
+const MIRROR_ROUTES: &[(&str, &str)] = &[
+    ("https://launchermeta.mojang.com", ""),
+    ("https://piston-meta.mojang.com", ""),
+    ("https://launcher.mojang.com", ""),
+    ("https://resources.download.minecraft.net", "/assets"),
+    ("https://libraries.minecraft.net", "/maven"),
+    ("https://meta.fabricmc.net", "/fabric-meta"),
+    ("https://meta.quiltmc.org", "/quilt-meta"),
+    ("https://maven.fabricmc.net", "/maven"),
+    ("https://maven.quiltmc.org", "/maven"),
+    ("https://maven.minecraftforge.net", "/maven"),
+    ("https://files.minecraftforge.net", "/forge"),
+];
+
+static MIRROR: RwLock<Option<String>> = RwLock::new(None);
+
+/// 设置下载镜像。传 `None` 回到官方源。
+///
+/// 只影响「从 Mojang / 加载器官方站」下载的地址，GitHub、Adoptium 等
+/// 第三方主机保持原样。
+pub fn set_mirror(base: Option<String>) {
+    if let Ok(mut guard) = MIRROR.write() {
+        *guard = base.map(|b| b.trim_end_matches('/').to_string());
+    }
+}
+
+pub fn mirror() -> Option<String> {
+    MIRROR.read().ok().and_then(|g| g.clone())
+}
+
+/// 按当前镜像改写下载地址；没有镜像时原样返回。
+pub fn rewrite(url: &str) -> String {
+    let Some(base) = mirror() else {
+        return url.to_string();
+    };
+    for (from, suffix) in MIRROR_ROUTES {
+        if let Some(rest) = url.strip_prefix(from) {
+            return format!("{base}{suffix}{rest}");
+        }
+    }
+    url.to_string()
+}
+
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+    let mut builder = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
         .timeout(Duration::from_secs(120))
-        .user_agent(USER_AGENT)
-        .build()
+        .user_agent(USER_AGENT);
+    if let Some(proxy) = proxy_url() {
+        if let Ok(p) = ureq::Proxy::new(&proxy) {
+            builder = builder.proxy(p);
+        }
+    }
+    builder.build()
+}
+
+/// 用户配置的 HTTP 代理（`http://127.0.0.1:7890` 之类），空表示直连。
+static PROXY: RwLock<Option<String>> = RwLock::new(None);
+
+pub fn set_proxy(url: Option<String>) {
+    if let Ok(mut guard) = PROXY.write() {
+        *guard = url.filter(|u| !u.trim().is_empty());
+    }
+}
+
+fn proxy_url() -> Option<String> {
+    PROXY.read().ok().and_then(|g| g.clone())
 }
 
 pub fn get_text(url: &str) -> Result<String> {
-    let resp = agent().get(url).call()?;
+    let resp = agent().get(&rewrite(url)).call()?;
     Ok(resp.into_string()?)
 }
 
@@ -113,7 +179,7 @@ pub fn post_form_text(url: &str, form: &[(&str, &str)]) -> Result<(u16, String)>
 
 /// Downloads `url` into memory, reporting total bytes as they arrive.
 pub fn get_bytes_with_progress(url: &str, mut on_chunk: impl FnMut(u64)) -> Result<Vec<u8>> {
-    let resp = agent().get(url).call()?;
+    let resp = agent().get(&rewrite(url)).call()?;
     let mut reader = resp.into_reader();
     let mut buf = Vec::new();
     let mut chunk = [0u8; 64 * 1024];
@@ -133,7 +199,7 @@ pub fn download_to(url: &str, dest: &Path, mut on_chunk: impl FnMut(u64)) -> Res
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let resp = agent().get(url).call()?;
+    let resp = agent().get(&rewrite(url)).call()?;
     let mut reader = resp.into_reader();
     let tmp = dest.with_extension("part");
     let mut out = std::fs::File::create(&tmp)?;

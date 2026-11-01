@@ -30,6 +30,19 @@ pub struct LauncherSettings {
     /// BCP-47 语言代码，例如 `zh-CN` / `en-US` / `ja-JP`。
     #[serde(default = "default_language")]
     pub language: String,
+    /// 下载源：`official` / `bmclapi`，或直接写一个镜像基地址。
+    #[serde(default = "default_mirror")]
+    pub mirror: String,
+    /// HTTP 代理，例如 `http://127.0.0.1:7890`；空表示直连。
+    #[serde(default)]
+    pub proxy: String,
+}
+
+/// BMCLAPI 的基地址，国内下载 Mojang 资源快很多。
+pub const BMCLAPI_BASE: &str = "https://bmclapi2.bangbang93.com";
+
+fn default_mirror() -> String {
+    "official".to_string()
 }
 
 fn default_language() -> String {
@@ -65,11 +78,27 @@ impl Default for LauncherSettings {
             check_sha1: true,
             last_version_filter: String::new(),
             language: default_language(),
+            mirror: default_mirror(),
+            proxy: String::new(),
         }
     }
 }
 
 impl LauncherSettings {
+    /// 把 `mirror` 字段翻译成实际的镜像基地址（`None` = 官方源）。
+    pub fn mirror_base(&self) -> Option<String> {
+        match self.mirror.as_str() {
+            "" | "official" => None,
+            "bmclapi" => Some(BMCLAPI_BASE.to_string()),
+            other => Some(other.to_string()),
+        }
+    }
+
+    /// 把网络配置推给 `net` 模块，启动和保存设置后都要调用一次。
+    pub fn apply_network(&self) {
+        crate::net::set_mirror(self.mirror_base());
+        crate::net::set_proxy(Some(self.proxy.clone()));
+    }
     pub fn load(paths: &LauncherPaths) -> Self {
         std::fs::read_to_string(paths.settings_file())
             .ok()

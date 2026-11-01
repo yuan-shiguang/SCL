@@ -52,6 +52,7 @@ impl LauncherApp {
         page = page.child(self.render_account_section(&theme, cx));
         page = page.child(self.render_java_section(&theme, cx));
         page = page.child(self.render_performance_section(&theme, cx));
+        page = page.child(self.render_network_section(&theme, cx));
         page = page.child(self.render_appearance_section(&theme, cx));
         page = page.child(self.render_language_section(&theme, cx));
         page = page.child(self.render_about_section(&theme, cx));
@@ -698,6 +699,70 @@ impl LauncherApp {
                 theme,
             ))
             .child(row)
+    }
+
+    fn render_network_section(
+        &self,
+        theme: &gpui_kit::component::Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut row = div().flex().flex_row().gap_2();
+        for (value, key) in [("official", "settings.mirror_official"), ("bmclapi", "settings.mirror_bmclapi")] {
+            let selected = self.settings.mirror == value;
+            row = row.child(
+                Button::new(SharedString::from(format!("mirror-{value}")))
+                    .label(self.t(key))
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_mirror(value, cx);
+                    })),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_5()
+            .rounded(px(16.))
+            .border_1()
+            .border_color(theme.border)
+            .child(self.section(
+                self.t("settings.network"),
+                self.t("settings.network_desc"),
+                theme,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(self.t("settings.mirror")),
+                    )
+                    .child(row),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(self.t("settings.proxy")),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.proxy_input).cleanable(true)),
+                    ),
+            )
     }
 
     fn render_appearance_section(
