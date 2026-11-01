@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.DS_Store
+Thumbs.db
+
+# 本机环境配置，不进仓库（详见 README「构建」）
+/.cargo/config.toml
+/rust-toolchain.toml

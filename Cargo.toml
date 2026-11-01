@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/scl-core", "crates/scl-app"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/yuan-shiguang/SCL"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+opt-level = 3
+strip = true

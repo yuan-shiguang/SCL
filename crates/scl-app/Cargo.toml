@@ -1,0 +1,18 @@
+[package]
+name = "stellae-craft-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Stellae Craft Launcher - a cross-platform Minecraft launcher built with GPUI Kit"
+
+[[bin]]
+name = "stellae-craft"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.8.1"
+scl-core = { path = "../scl-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+open = "5"
