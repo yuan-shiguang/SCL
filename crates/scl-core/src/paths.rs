@@ -15,11 +15,22 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct LauncherPaths {
     root: PathBuf,
+    /// 用户自定义的 `.minecraft` 目录；`None` 表示用 `<root>/minecraft`。
+    minecraft: Option<PathBuf>,
 }
 
 impl LauncherPaths {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            minecraft: None,
+        }
+    }
+
+    /// 指向一个外部的 `.minecraft`（可以是官方启动器 / 其他启动器在用的那个）。
+    pub fn with_minecraft(mut self, dir: Option<PathBuf>) -> Self {
+        self.minecraft = dir.filter(|d| !d.as_os_str().is_empty());
+        self
     }
 
     /// Default data directory for the current platform.
@@ -43,7 +54,9 @@ impl LauncherPaths {
     }
 
     pub fn minecraft_dir(&self) -> PathBuf {
-        self.root.join("minecraft")
+        self.minecraft
+            .clone()
+            .unwrap_or_else(|| self.root.join("minecraft"))
     }
 
     pub fn versions_dir(&self) -> PathBuf {

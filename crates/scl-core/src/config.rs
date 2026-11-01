@@ -36,6 +36,12 @@ pub struct LauncherSettings {
     /// HTTP 代理，例如 `http://127.0.0.1:7890`；空表示直连。
     #[serde(default)]
     pub proxy: String,
+    /// 当前使用的 `.minecraft` 目录；空表示用启动器自己的目录。
+    #[serde(default)]
+    pub active_game_dir: String,
+    /// 添加过的其它 `.minecraft` 目录。
+    #[serde(default)]
+    pub game_dirs: Vec<String>,
 }
 
 /// BMCLAPI 的基地址，国内下载 Mojang 资源快很多。
@@ -74,12 +80,14 @@ impl Default for LauncherSettings {
             java_path: None,
             theme: default_theme(),
             download_threads: default_threads(),
-            close_launcher_on_launch: true,
+            close_launcher_on_launch: false,
             check_sha1: true,
             last_version_filter: String::new(),
             language: default_language(),
             mirror: default_mirror(),
             proxy: String::new(),
+            active_game_dir: String::new(),
+            game_dirs: Vec::new(),
         }
     }
 }

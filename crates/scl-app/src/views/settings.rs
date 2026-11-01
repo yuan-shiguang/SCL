@@ -53,6 +53,7 @@ impl LauncherApp {
         page = page.child(self.render_java_section(&theme, cx));
         page = page.child(self.render_performance_section(&theme, cx));
         page = page.child(self.render_network_section(&theme, cx));
+        page = page.child(self.render_game_dir_section(&theme, cx));
         page = page.child(self.render_appearance_section(&theme, cx));
         page = page.child(self.render_language_section(&theme, cx));
         page = page.child(self.render_about_section(&theme, cx));
@@ -106,18 +107,13 @@ impl LauncherApp {
                         .flex_row()
                         .items_center()
                         .gap_3()
-                        .child(
-                            div()
-                                .size(px(36.))
-                                .rounded_full()
-                                .bg(theme.primary)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_sm()
-                                .text_color(theme.primary_foreground)
-                                .child(ui::initial(&account.name)),
-                        )
+                        .child(ui::avatar(
+                            &account.name,
+                            self.avatar.as_ref(),
+                            36.,
+                            theme.primary,
+                            theme.primary_foreground,
+                        ))
                         .child(
                             div()
                                 .flex()
@@ -359,6 +355,7 @@ impl LauncherApp {
                                             move |this, _, _, cx| {
                                                 this.settings.active_account = Some(name.clone());
                                                 let _ = this.settings.save(&this.paths);
+                                                this.refresh_avatar(cx);
                                                 cx.notify();
                                             }
                                         })),
@@ -780,6 +777,71 @@ impl LauncherApp {
                             .flex_1()
                             .child(Input::new(&self.proxy_input).cleanable(true)),
                     ),
+            )
+    }
+
+    fn render_game_dir_section(
+        &self,
+        theme: &gpui_kit::component::Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let current = self.paths.minecraft_dir().to_string_lossy().to_string();
+        let mut row = div().flex().flex_row().flex_wrap().gap_2();
+
+        // 默认目录
+        row = row.child(
+            Button::new("gamedir-default")
+                .label(self.t("settings.game_dir_default"))
+                .selected(self.settings.active_game_dir.is_empty())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.set_game_dir("", cx);
+                })),
+        );
+
+        for dir in self.settings.game_dirs.clone() {
+            let selected = self.settings.active_game_dir == dir;
+            let label = std::path::Path::new(&dir)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dir.clone());
+            let owned = dir.clone();
+            row = row.child(
+                Button::new(SharedString::from(format!("gamedir-{dir}")))
+                    .label(SharedString::from(label))
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_game_dir(&owned, cx);
+                    })),
+            );
+        }
+
+        row = row.child(
+            Button::new("gamedir-add")
+                .label(self.t("settings.game_dir_add"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.pick_game_dir(cx);
+                })),
+        );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_5()
+            .rounded(px(16.))
+            .border_1()
+            .border_color(theme.border)
+            .child(self.section(
+                self.t("settings.game_dir"),
+                self.t("settings.game_dir_desc"),
+                theme,
+            ))
+            .child(row)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(self.tf("settings.game_dir_current", &[("path", &current)])),
             )
     }
 

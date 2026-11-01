@@ -137,8 +137,16 @@ SCL_MS_TENANT=993f705b-ab92-4f24-92b7-36415614dc5f cargo run
 启动时会挑「正好等于要求的大版本」，没有就挑比要求新的里面最旧的那个
 （1.17 配 21，而不是配 25）。
 
-## 数据目录
+## 排查启动问题
 
+```bash
+stellae-craft --launch <实例 id>    # 不开界面，直接启动并把引擎日志打到 stdout
+```
+
+实例 id 就是 `<数据目录>/instances/` 下的目录名（也是 `instances.json` 里的 `id`）。
+启动失败时任务中心会带上日志尾巴，不用再去翻文件。
+
+## 数据目录
 | 平台 | 路径 |
 | --- | --- |
 | Windows | `%APPDATA%\StellaeCraft` |

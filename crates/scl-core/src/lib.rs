@@ -16,6 +16,7 @@ pub mod loader;
 pub mod meta;
 pub mod net;
 pub mod paths;
+pub mod skin;
 
 pub use error::{Error, Result};
 pub use instance::{Instance, InstanceStore};

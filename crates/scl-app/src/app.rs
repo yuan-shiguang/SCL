@@ -188,6 +188,8 @@ pub struct LauncherApp {
     pub running_instance: Option<String>,
 
     pub login: LoginView,
+    /// 当前账号的皮肤头像（本地 PNG 缓存）。
+    pub avatar: Option<PathBuf>,
     pub offline_name: Entity<InputState>,
     pub proxy_input: Entity<InputState>,
     pub toast: Option<Toast>,
@@ -200,12 +202,19 @@ pub struct LauncherApp {
 
 impl LauncherApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let paths = LauncherPaths::discover();
-        let _ = paths.ensure();
-        let mut settings = LauncherSettings::load(&paths);
+        let base = LauncherPaths::discover();
+        let _ = base.ensure();
+        let mut settings = LauncherSettings::load(&base);
         if settings.language.is_empty() {
             settings.language = Lang::detect().code().to_string();
         }
+        // 自定义 `.minecraft` 目录：assets / libraries / versions 都跟着走。
+        let paths = if settings.active_game_dir.is_empty() {
+            base
+        } else {
+            base.with_minecraft(Some(PathBuf::from(&settings.active_game_dir)))
+        };
+        let _ = paths.ensure();
         let instances = InstanceStore::load(&paths);
         // 下载源 / 代理要在任何网络请求之前生效。
         settings.apply_network();
@@ -258,6 +267,7 @@ impl LauncherApp {
             selected_instance: None,
             running_instance: None,
             login: LoginView::Hidden,
+            avatar: None,
             offline_name,
             proxy_input,
             toast: None,
@@ -268,6 +278,7 @@ impl LauncherApp {
         };
         app.selected_instance = app.instances.list().first().map(|i| i.id.clone());
         app.apply_theme(cx);
+        app.refresh_avatar(cx);
         app.refresh_manifest(cx);
         app.detect_java(cx);
         app
@@ -637,6 +648,94 @@ impl LauncherApp {
             }
         })
         .detach();
+    }
+
+    /// 拉取当前账号的皮肤头像（异步，失败就保留首字母）。
+    pub fn refresh_avatar(&mut self, cx: &mut Context<Self>) {
+        let Some(account) = self.settings.active_account().cloned() else {
+            self.avatar = None;
+            return;
+        };
+        if !account.is_microsoft() {
+            self.avatar = None;
+            return;
+        }
+        let paths = self.paths.clone();
+        let bridge = bridge();
+        let sender = bridge.sender;
+        std::thread::spawn(move || {
+            let path = scl_core::skin::head_icon(&paths, &account)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let _ = sender.send(TaskEvent::Log(format!("__avatar__{path}")));
+        });
+        let mut receiver = bridge.receiver;
+        cx.spawn(async move |this, cx| {
+            while let Some(event) = receiver.next().await {
+                if let TaskEvent::Log(line) = event {
+                    if let Some(payload) = line.strip_prefix("__avatar__") {
+                        let path = if payload.is_empty() {
+                            None
+                        } else {
+                            Some(PathBuf::from(payload))
+                        };
+                        let _ = this.update(cx, |app: &mut Self, cx| {
+                            app.avatar = path;
+                            cx.notify();
+                        });
+                    }
+                }
+                break;
+            }
+        })
+        .detach();
+    }
+
+    /// 切换 `.minecraft` 目录（空字符串 = 启动器自己的目录）。
+    pub fn set_game_dir(&mut self, dir: &str, cx: &mut Context<Self>) {
+        self.settings.active_game_dir = dir.to_string();
+        self.rebuild_paths();
+        let _ = self.settings.save(&self.paths);
+        // 目录换了，版本清单和已安装列表都得重新算。
+        self.manifest = None;
+        self.refresh_manifest(cx);
+        cx.notify();
+    }
+
+    /// 弹目录选择框，把选中的 `.minecraft` 加进列表并切过去。
+    pub fn pick_game_dir(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(SharedString::from("选择 .minecraft 目录")),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(dir) = paths.first().cloned() {
+                    let dir = dir.to_string_lossy().to_string();
+                    let _ = this.update(cx, |app: &mut Self, cx| {
+                        if !app.settings.game_dirs.contains(&dir) {
+                            app.settings.game_dirs.push(dir.clone());
+                        }
+                        app.set_game_dir(&dir, cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// 按当前设置重建 `paths`。
+    fn rebuild_paths(&mut self) {
+        let base = LauncherPaths::discover();
+        self.paths = if self.settings.active_game_dir.is_empty() {
+            base
+        } else {
+            base.with_minecraft(Some(PathBuf::from(&self.settings.active_game_dir)))
+        };
+        let _ = self.paths.ensure();
     }
 
     pub fn detect_java(&mut self, cx: &mut Context<Self>) {
@@ -1036,6 +1135,7 @@ impl LauncherApp {
                                     app.login = LoginView::Hidden;
                                     let msg = app.tf("toast.login_ok", &[("name", &account.name)]);
                                     app.set_toast(msg, false, cx);
+                                    app.refresh_avatar(cx);
                                 }
                                 true
                             } else {
@@ -1069,6 +1169,7 @@ impl LauncherApp {
         self.settings.set_account(account.clone());
         let _ = self.settings.save(&self.paths);
         self.login = LoginView::Hidden;
+        self.avatar = None;
         let msg = self.tf("toast.login_ok", &[("name", &account.name)]);
         self.set_toast(msg, false, cx);
     }
@@ -1076,6 +1177,7 @@ impl LauncherApp {
     pub fn logout(&mut self, name: &str, cx: &mut Context<Self>) {
         self.settings.remove_account(name);
         let _ = self.settings.save(&self.paths);
+        self.refresh_avatar(cx);
         cx.notify();
     }
 
@@ -1347,17 +1449,13 @@ impl LauncherApp {
                             this.page = Page::Settings;
                             cx.notify();
                         }))
-                        .child(
-                            div()
-                                .size(px(32.))
-                                .rounded_full()
-                                .bg(theme.secondary)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_sm()
-                                .child(ui::initial(&account_label)),
-                        )
+                        .child(ui::avatar(
+                            &account_label,
+                            self.avatar.as_ref(),
+                            32.,
+                            theme.secondary,
+                            theme.foreground,
+                        ))
                         .child(
                             div()
                                 .flex()
@@ -1727,6 +1825,45 @@ fn parse_loader(instance: &Instance) -> (LoaderKind, Option<String>) {
     (kind, version)
 }
 
+/// 命令行直启：`stellae-craft --launch <实例 id>`。
+///
+/// 不开窗口，把引擎日志直接打到 stdout，用来确认「启动链路」本身有没有问题。
+pub fn launch_from_cli(instance_id: &str) -> std::result::Result<(), String> {
+    let paths = LauncherPaths::discover();
+    let settings = LauncherSettings::load(&paths);
+    settings.apply_network();
+    let store = InstanceStore::load(&paths);
+    let instance = store
+        .get(instance_id)
+        .cloned()
+        .ok_or_else(|| format!("找不到实例 {instance_id}"))?;
+    let account = settings
+        .active_account()
+        .cloned()
+        .ok_or_else(|| "还没有账户，先在界面里登录".to_string())?;
+    let account =
+        auth::ensure_valid(&auth::MsApp::default(), &account).map_err(|e| e.to_string())?;
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let printer = std::thread::spawn(move || {
+        for event in receiver {
+            if let TaskEvent::Log(line) = event {
+                println!("{line}");
+            }
+        }
+    });
+    let result = run_instance(
+        &paths,
+        &settings,
+        &instance,
+        &account,
+        sender,
+        cancel_token(),
+    );
+    let _ = printer.join();
+    result
+}
+
 /// 工作线程：解析版本、按需安装、挑 Java、启动进程。
 fn run_instance(
     paths: &LauncherPaths,
@@ -1803,6 +1940,7 @@ fn run_instance(
 
     let _ = sender.send(TaskEvent::Stage("Starting".into()));
     let process = launch::launch(&options, sender.clone()).map_err(|e| e.to_string())?;
+    let log_path = process.log_path.clone();
     // 哨兵行：UI 收到它就说明游戏进程已经起来了，与界面语言无关。
     let _ = sender.send(TaskEvent::Log("__launched__".to_string()));
     let _ = sender.send(TaskEvent::Log(format!("$ {}", process.command_line)));
@@ -1811,6 +1949,25 @@ fn run_instance(
     if code == 0 {
         Ok(())
     } else {
-        Err(format!("Game exited with code {code}"))
+        // 把日志尾巴贴进报错里，否则用户只看到 "exit code 1" 根本没法查。
+        let tail = tail_of_log(&log_path, 8);
+        if tail.is_empty() {
+            Err(format!("游戏启动后立即退出 (exit code {code})"))
+        } else {
+            Err(format!("游戏启动后立即退出 (exit code {code})\n{tail}"))
+        }
     }
+}
+
+/// 读日志文件最后几行（跳过空行），用于失败提示。
+fn tail_of_log(path: &std::path::Path, count: usize) -> String {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|l| l.trim_end())
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    lines[lines.len().saturating_sub(count)..].join("\n")
 }

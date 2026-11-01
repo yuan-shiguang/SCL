@@ -11,6 +11,23 @@ mod views;
 use gpui_kit::*;
 
 fn main() {
+    // `stellae-craft --launch <实例 id>`：不开界面，直接把游戏拉起来并打印日志，
+    // 排查「点了启动没反应」时很好用。
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--launch") {
+        let Some(instance) = args.get(2) else {
+            eprintln!("用法: stellae-craft --launch <实例 id>");
+            std::process::exit(2);
+        };
+        match app::launch_from_cli(instance) {
+            Ok(()) => std::process::exit(0),
+            Err(error) => {
+                eprintln!("启动失败: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     application()
         .with_assets(assets::Assets)
         .run(|cx| {

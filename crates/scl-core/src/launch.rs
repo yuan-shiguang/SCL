@@ -182,8 +182,11 @@ pub fn build_arguments(opts: &LaunchOptions<'_>) -> Result<Vec<String>> {
     args.push(format!("-Xmx{memory}M"));
     args.push(format!("-Xms{}M", (memory / 2).max(256)));
     args.push("-XX:+UseG1GC".to_string());
-    args.push("-XX:G1NewSizePercent=20".to_string());
+    // 注意：`G1NewSizePercent` 在 Java 8/21 上都是 experimental，
+    // 不加 `-XX:+UnlockExperimentalVMOptions` 会让 JVM 直接拒绝启动，
+    // 所以这里只用稳定的调优参数。
     args.push("-XX:MaxGCPauseMillis=50".to_string());
+    args.push("-XX:+ParallelRefProcEnabled".to_string());
     args.push("-Dfile.encoding=UTF-8".to_string());
     args.push(format!("-Dminecraft.launcher.brand={LAUNCHER_NAME}"));
     args.push(format!("-Dminecraft.launcher.version={LAUNCHER_VERSION}"));
