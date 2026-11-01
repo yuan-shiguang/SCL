@@ -617,6 +617,28 @@ impl LauncherApp {
         .detach();
     }
 
+    /// 手动挑一个 java 可执行文件（自动扫描兜不住时的保底方案）。
+    pub fn pick_java(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(SharedString::from("java.exe / java")),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.first().cloned() {
+                    let _ = this.update(cx, |app: &mut Self, cx| {
+                        app.settings.java_path = Some(path.to_string_lossy().to_string());
+                        let _ = app.settings.save(&app.paths);
+                        app.detect_java(cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub fn detect_java(&mut self, cx: &mut Context<Self>) {
         if self.java_scanning {
             return;

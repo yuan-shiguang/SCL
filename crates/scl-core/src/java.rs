@@ -131,23 +131,45 @@ fn candidates() -> Vec<PathBuf> {
 
     #[cfg(windows)]
     {
-        let roots = [
-            r"C:\Program Files\Java",
-            r"C:\Program Files\Eclipse Adoptium",
-            r"C:\Program Files\Eclipse Foundation",
-            r"C:\Program Files\Microsoft",
-            r"C:\Program Files\Zulu",
-            r"C:\Program Files\BellSoft",
-            r"C:\Program Files\Amazon Corretto",
-            r"C:\Program Files (x86)\Java",
-        ];
-        for root in roots {
-            push_children(Path::new(root), bin, &mut out);
+        // 注册表里登记的 JDK / JRE（Oracle、Adoptium、Microsoft 都会写）。
+        for home in registry_homes() {
+            out.push(home.join("bin").join(bin));
         }
+
+        let mut roots: Vec<PathBuf> = vec![
+            PathBuf::from(r"C:\Program Files\Java"),
+            PathBuf::from(r"C:\Program Files\Eclipse Adoptium"),
+            PathBuf::from(r"C:\Program Files\Eclipse Foundation"),
+            PathBuf::from(r"C:\Program Files\AdoptOpenJDK"),
+            PathBuf::from(r"C:\Program Files\Microsoft"),
+            PathBuf::from(r"C:\Program Files\Semeru"),
+            PathBuf::from(r"C:\Program Files\Temurin"),
+            PathBuf::from(r"C:\Program Files\Zulu"),
+            PathBuf::from(r"C:\Program Files\BellSoft"),
+            PathBuf::from(r"C:\Program Files\Amazon Corretto"),
+            PathBuf::from(r"C:\Program Files\Android\Android Studio\jbr"),
+            PathBuf::from(r"C:\Program Files\Common Files\Oracle\Java\javapath"),
+            PathBuf::from(r"C:\Program Files (x86)\Java"),
+            PathBuf::from(r"C:\Program Files (x86)\Eclipse Adoptium"),
+        ];
+        for var in ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "ProgramData"] {
+            if let Ok(value) = std::env::var(var) {
+                let base = PathBuf::from(value);
+                roots.push(base.join(".jdks")); // IntelliJ 下载的 JDK
+                roots.push(base.join("Programs").join("Eclipse Adoptium"));
+                roots.push(base.join(".minecraft").join("runtime")); // 官方启动器自带
+                roots.push(base.join(".hmcl").join("java"));
+            }
+        }
+        for root in &roots {
+            push_children(root, bin, &mut out);
+            // `.minecraft/runtime/jre-legacy/windows-x64/...` 这类还要再深一层。
+            push_grandchildren(root, bin, &mut out);
+        }
+
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             let local = PathBuf::from(local);
             push_children(&local.join("Programs"), bin, &mut out);
-            out.push(local.join("Programs").join("Eclipse Adoptium").join(bin));
             // Minecraft's own bundled runtimes.
             let packages = local.join("Packages");
             if let Ok(entries) = std::fs::read_dir(&packages) {
@@ -184,9 +206,102 @@ fn candidates() -> Vec<PathBuf> {
         out.push(PathBuf::from("/usr/bin").join(bin));
     }
 
-    // Whatever is on PATH.
+    // PATH 上的 java：必须先解析成绝对路径，光有 "java" 这个名字
+    // `is_file()` 一定是 false，这正是之前「装了 Java 却扫不到」的原因。
+    out.extend(path_java_binaries(bin));
+
+    // Whatever is on PATH (fallback, in case `where`/`which` is unavailable).
     out.push(PathBuf::from(bin));
     out
+}
+
+/// 用 `where` / `which` 把 PATH 上的 java 解析成绝对路径。
+fn path_java_binaries(bin: &str) -> Vec<PathBuf> {
+    let mut command = if cfg!(windows) {
+        Command::new("where")
+    } else {
+        Command::new("which")
+    };
+    command
+        .arg(bin)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let Ok(output) = hidden(&mut command).output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| PathBuf::from(line.trim()))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+/// 注册表里登记的 Java 安装目录（`JavaHome`）。
+#[cfg(windows)]
+fn registry_homes() -> Vec<PathBuf> {
+    const KEYS: &[&str] = &[
+        r"HKLM\SOFTWARE\JavaSoft\JDK",
+        r"HKLM\SOFTWARE\JavaSoft\JRE",
+        r"HKLM\SOFTWARE\JavaSoft\Java Development Kit",
+        r"HKLM\SOFTWARE\JavaSoft\Java Runtime Environment",
+        r"HKLM\SOFTWARE\Eclipse Adoptium\JDK",
+        r"HKLM\SOFTWARE\Eclipse Adoptium\JRE",
+        r"HKLM\SOFTWARE\Microsoft\JDK",
+        r"HKLM\SOFTWARE\WOW6432Node\JavaSoft\JDK",
+        r"HKLM\SOFTWARE\WOW6432Node\JavaSoft\JRE",
+    ];
+    let mut out = Vec::new();
+    for key in KEYS {
+        let mut command = Command::new("reg");
+        command
+            .args(["query", key, "/s", "/v", "JavaHome"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let Ok(output) = hidden(&mut command).output() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line.strip_prefix("JavaHome") else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            let Some(rest) = rest.strip_prefix("REG_SZ") else {
+                continue;
+            };
+            let path = rest.trim();
+            if !path.is_empty() {
+                out.push(PathBuf::from(path));
+            }
+        }
+    }
+    out
+}
+
+/// 再往下探一层，覆盖 `.minecraft/runtime/jre-legacy/windows-x64/...` 这种结构。
+#[cfg(windows)]
+fn push_grandchildren(root: &Path, bin: &str, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Ok(inner) = std::fs::read_dir(entry.path()) else {
+            continue;
+        };
+        for child in inner.flatten() {
+            let path = child.path();
+            out.push(path.join("bin").join(bin));
+            out.push(path.join("Contents").join("Home").join("bin").join(bin));
+            out.push(path.join("jre").join("bin").join(bin));
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -248,9 +363,14 @@ pub fn find_for(required: u32) -> Option<JavaRuntime> {
 /// `UnsupportedClassVersionError`, so "no match" is the honest answer here.
 pub fn find_compatible(required: u32) -> Option<JavaRuntime> {
     let all = find_all();
+    if let Some(exact) = all.iter().find(|r| r.major == required) {
+        return Some(exact.clone());
+    }
+    // 没有正好对上的，就取「比要求新的里面最旧的那个」：
+    // 1.17 用 21 比用 25 稳，更别说 1.16 配 25 直接炸。
     all.iter()
-        .find(|r| r.major == required)
-        .or_else(|| all.iter().find(|r| r.major > required))
+        .filter(|r| r.major > required)
+        .min_by_key(|r| r.major)
         .cloned()
 }
 
@@ -273,6 +393,7 @@ struct AdoptiumPackage {
     link: String,
     name: String,
     #[serde(default)]
+    #[allow(dead_code)]
     size: u64,
 }
 

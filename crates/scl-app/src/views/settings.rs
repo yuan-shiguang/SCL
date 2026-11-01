@@ -444,6 +444,17 @@ impl LauncherApp {
                 }),
         );
 
+        if let Some(manual) = self.settings.java_path.clone() {
+            list = list.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(self.tf("settings.java_picked", &[("path", &manual)])),
+            );
+        }
+
         if self.javas.is_empty() {
             list = list.child(
                 div()
@@ -547,6 +558,13 @@ impl LauncherApp {
                                         this.download_java(major, cx);
                                     }))
                             }))
+                            .child(
+                                Button::new("pick-java")
+                                    .label(self.t("settings.java_pick"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.pick_java(cx);
+                                    })),
+                            )
                             .child(
                                 Button::new("rescan-java")
                                     .label(if self.java_scanning {

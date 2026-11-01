@@ -105,12 +105,37 @@ pub const TENANT_ID: &str = "993f705b-ab92-4f24-92b7-36415614dc5f";
 登录走设备码流程：点「使用微软账户登录」后界面显示 8 位代码和
 `microsoft.com/link`，浏览器里确认即可，启动器轮询拿 token。
 
-租户默认用 `common`，这样个人微软账号才能登录；如果应用被限制成
-「仅此组织目录」，设置环境变量：
+`XboxLive.signin` 是**消费者（个人账号）作用域**，所以默认走 `/consumers`
+端点；一旦微软返回 `AADSTS70011 / 50020 / 700016`，会自动换 `/common`
+再试一次。要强制指定端点（比如应用只允许本组织目录）：
 
 ```bash
 SCL_MS_TENANT=993f705b-ab92-4f24-92b7-36415614dc5f cargo run
 ```
+
+> 工作 / 学校账号无法登录 Minecraft（微软侧就不给 `XboxLive.signin`），
+> 必须用 @outlook.com / @live.cn 这类个人账号。启动器会把这类报错直接翻成
+> 中文提示。
+
+## Java
+
+启动器按这个顺序找 Java：
+
+1. `JAVA_HOME`
+2. 自己下载的托管运行时（`<数据目录>/java`）
+3. `where java` / `which java` 解析出的 PATH 上的所有 java
+4. Windows 注册表 `JavaSoft` / `Eclipse Adoptium` / `Microsoft` 的 `JavaHome`
+5. 常见安装目录（`Program Files\Java`、`Eclipse Adoptium`、`Zulu`、
+   `Microsoft`、`~/.jdks`、`.minecraft/runtime`、JetBrains JBR…）
+6. macOS / Linux 的 `/Library/Java`、`/usr/lib/jvm`
+
+一个都没找到时可以：
+
+- 点「手动选择」自己指到 `java.exe`（全平台可用），或
+- 点「+ Java 8 / 17 / 21」让启动器从 Adoptium 下一个 Temurin JRE。
+
+启动时会挑「正好等于要求的大版本」，没有就挑比要求新的里面最旧的那个
+（1.17 配 21，而不是配 25）。
 
 ## 数据目录
 

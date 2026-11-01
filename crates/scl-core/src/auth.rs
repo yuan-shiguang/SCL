@@ -30,7 +30,7 @@ impl Default for MsApp {
     fn default() -> Self {
         Self {
             client_id: CLIENT_ID.to_string(),
-            tenant: std::env::var("SCL_MS_TENANT").unwrap_or_else(|_| "common".to_string()),
+            tenant: std::env::var("SCL_MS_TENANT").unwrap_or_else(|_| "consumers".to_string()),
         }
     }
 }
@@ -388,15 +388,52 @@ fn finish_login(
 
 /// Full interactive login. `on_code` fires as soon as the code is available so
 /// the UI can display it while this thread keeps polling.
+///
+/// Minecraft 的 `XboxLive.signin` 是**消费者**（个人账号）作用域，必须走
+/// `/consumers` 端点。如果用户的应用注册只支持工作/学校账号，`/consumers`
+/// 会直接拒绝，这时再退回 `/common` 试一次。
 pub fn microsoft_login(
     app: &MsApp,
     cancel: &AtomicBool,
     mut on_code: impl FnMut(&DeviceCode),
     mut on_wait: impl FnMut(&str),
 ) -> Result<Account> {
+    let mut app = app.clone();
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match login_once(&app, cancel, &mut on_code, &mut on_wait) {
+            Ok(account) => return Ok(account),
+            Err(err) => {
+                let text = err.to_string();
+                let tenant_mismatch = text.contains("AADSTS70011")
+                    || text.contains("AADSTS50020")
+                    || text.contains("AADSTS700016");
+                // 只换一次端点，别让用户无限重试。
+                if attempt == 1 && tenant_mismatch {
+                    app.tenant = if app.tenant == "consumers" {
+                        "common".to_string()
+                    } else {
+                        "consumers".to_string()
+                    };
+                    on_wait("换用另一种登录端点重试…");
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+    }
+}
+
+fn login_once(
+    app: &MsApp,
+    cancel: &AtomicBool,
+    on_code: &mut impl FnMut(&DeviceCode),
+    on_wait: &mut impl FnMut(&str),
+) -> Result<Account> {
     let device = request_device_code(app)?;
     on_code(&device);
-    let token = poll_device_code(app, &device, cancel, &mut on_wait)?;
+    let token = poll_device_code(app, &device, cancel, &mut *on_wait)?;
     let ms_token = token
         .access_token
         .clone()
