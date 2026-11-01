@@ -86,9 +86,37 @@ fn proxy_url() -> Option<String> {
     PROXY.read().ok().and_then(|g| g.clone())
 }
 
+/// 网络抖动（超时、连接被重置）时重试几次，国内连 login.microsoftonline.com
+/// 经常第一次就 10060，重试基本能过。
+fn with_retry<T>(mut attempt_fn: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut last: Option<Error> = None;
+    for attempt in 0..3u32 {
+        match attempt_fn() {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                let transient = matches!(&err, Error::Http(msg)
+                    if msg.contains("timed out")
+                        || msg.contains("10060")
+                        || msg.contains("Connection")
+                        || msg.contains("reset")
+                        || msg.contains("broken pipe")
+                        || msg.contains("unexpected EOF"));
+                last = Some(err);
+                if !transient {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500 * u64::from(attempt + 1)));
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| Error::Http("网络请求失败".into())))
+}
+
 pub fn get_text(url: &str) -> Result<String> {
-    let resp = agent().get(&rewrite(url)).call()?;
-    Ok(resp.into_string()?)
+    with_retry(|| {
+        let resp = agent().get(&rewrite(url)).call()?;
+        Ok(resp.into_string()?)
+    })
 }
 
 pub fn get_json<T: DeserializeOwned>(url: &str) -> Result<T> {
@@ -162,7 +190,7 @@ pub fn post_json_text(url: &str, body: &serde_json::Value) -> Result<(u16, Strin
 
 /// POST form-encoded but keep the body on HTTP error statuses.
 pub fn post_form_text(url: &str, form: &[(&str, &str)]) -> Result<(u16, String)> {
-    match agent()
+    with_retry(|| match agent()
         .post(url)
         .set("Content-Type", "application/x-www-form-urlencoded")
         .set("Accept", "application/json")
@@ -174,7 +202,7 @@ pub fn post_form_text(url: &str, form: &[(&str, &str)]) -> Result<(u16, String)>
         }
         Err(ureq::Error::Status(code, resp)) => Ok((code, resp.into_string().unwrap_or_default())),
         Err(e) => Err(Error::Http(e.to_string())),
-    }
+    })
 }
 
 /// Downloads `url` into memory, reporting total bytes as they arrive.
@@ -199,24 +227,26 @@ pub fn download_to(url: &str, dest: &Path, mut on_chunk: impl FnMut(u64)) -> Res
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let resp = agent().get(&rewrite(url)).call()?;
-    let mut reader = resp.into_reader();
-    let tmp = dest.with_extension("part");
-    let mut out = std::fs::File::create(&tmp)?;
-    let mut total = 0u64;
-    let mut chunk = [0u8; 64 * 1024];
-    loop {
-        let n = reader.read(&mut chunk).map_err(|e| Error::Http(e.to_string()))?;
-        if n == 0 {
-            break;
+    with_retry(move || {
+        let resp = agent().get(&rewrite(url)).call()?;
+        let mut reader = resp.into_reader();
+        let tmp = dest.with_extension("part");
+        let mut out = std::fs::File::create(&tmp)?;
+        let mut total = 0u64;
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            let n = reader.read(&mut chunk).map_err(|e| Error::Http(e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            std::io::Write::write_all(&mut out, &chunk[..n])?;
+            total += n as u64;
+            on_chunk(n as u64);
         }
-        std::io::Write::write_all(&mut out, &chunk[..n])?;
-        total += n as u64;
-        on_chunk(n as u64);
-    }
-    drop(out);
-    std::fs::rename(&tmp, dest)?;
-    Ok(total)
+        drop(out);
+        std::fs::rename(&tmp, dest)?;
+        Ok(total)
+    })
 }
 
 pub fn sha1_of_file(path: &Path) -> Result<String> {

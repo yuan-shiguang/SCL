@@ -205,7 +205,22 @@ fn ms_error(resp: &MsResponse, fallback: &str) -> Error {
         .clone()
         .or_else(|| resp.error.clone())
         .unwrap_or_else(|| fallback.to_string());
-    Error::Auth(detail)
+    // 把几个玩家最常撞到的 AADSTS 码翻译成人话，原始报错留在后面方便排查。
+    let hint = if detail.contains("AADSTS70011") {
+        Some("这个微软账号用不了 Minecraft：请改用「个人账户」（@outlook.com / @live.cn 之类），工作或学校账户不在 Xbox Live 的支持范围内。")
+    } else if detail.contains("AADSTS50020") {
+        Some("这个账号不属于该应用所在的租户，请用个人微软账号登录。")
+    } else if detail.contains("AADSTS700016") {
+        Some("Azure 应用不存在或已被删除，请检查 client id。")
+    } else if detail.contains("AADSTS900144") {
+        Some("请求缺少 client_id，请更新到最新版本。")
+    } else {
+        None
+    };
+    match hint {
+        Some(hint) => Error::Auth(format!("{hint}\n{detail}")),
+        None => Error::Auth(detail),
+    }
 }
 
 /// Step 1: request a device code. The user must open `verification_uri`.
